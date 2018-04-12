@@ -251,7 +251,7 @@ for i in labels:
         a[i] = 1
 for i in a.keys():
     a[i] = 1/a[i]
-weights = torch.FloatTensor(list(a.values()))
+weights = torch.FloatTensor(list(a.values())).cuda()
 
 
 # In[6]:
