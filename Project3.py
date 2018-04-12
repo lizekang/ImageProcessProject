@@ -274,6 +274,7 @@ for epoch in range(NUM_EPOCHS):
     test_loss = 0
     train_acc = 0
     test_acc = 0
+    model.train()
     for i, (data, label) in tqdm(enumerate(train_loader), total=NUM_TRAIN // BATCH_SIZE, ncols=50, leave=False, unit='b'):
         data = Variable(data).cuda()
         label = Variable(label).cuda()
@@ -289,7 +290,7 @@ for epoch in range(NUM_EPOCHS):
                 train_acc += 1
         loss.backward()
         optimizer.step()
-        
+    model.eval() 
     for i, (data, label) in enumerate(val_loader):
         data = Variable(data).cuda()
         label = Variable(label).cuda()
