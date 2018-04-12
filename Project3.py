@@ -260,7 +260,7 @@ weights = list(a.values())
 LEARNING_RATE = 0.001
 
 model = SEResNeXt(BottleneckX, [3, 4, 6, 3], num_classes=374)
-# model.cuda()
+model.cuda()
 critrien = nn.BCEWithLogitsLoss(weight=weights,size_average=False)
 optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
