@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[2]:
+# In[1]:
 
 
 import os
@@ -20,6 +20,8 @@ from torch import autograd
 from torch.autograd import Variable
 
 from tqdm import tqdm
+import warnings
+warnings.filterwarnings("ignore")
 
 ROOT = "Datasets/corel_5k/images/"
 dirs = [ROOT+i+"/" for i in next(os.walk(ROOT))[1]]
@@ -51,7 +53,7 @@ for i in test_labels:
     test_label_dict[str(i[0])+".jpeg"] = i[1:]
 
 
-# In[3]:
+# In[2]:
 
 
 train_pairs = []
@@ -59,33 +61,27 @@ val_pairs = []
 test_pairs = []
 for i in files:
     img_name = i.split("/")[-1]
-    try:
-        label = train_label_dict[img_name]
-        for j in label:
-            train_pairs.append((i, j))
-    except KeyError:
-        if img_name in val_label_dict.keys():
-            val_pairs.append((i, val_label_dict[img_name]))
-        elif img_name in test_label_dict.keys():
-            test_pairs.append((i, test_label_dict[img_name]))
+    if img_name in val_label_dict.keys():
+        val_pairs.append((i, val_label_dict[img_name]))
+    elif img_name in test_label_dict.keys():
+        test_pairs.append((i, test_label_dict[img_name]))
+    elif img_name in train_label_dict.keys():
+        train_pairs.append((i, train_label_dict[img_name]))
 
 
-# In[4]:
+# In[3]:
 
 
 class COREL_5K(Dataset):
-    def __init__(self, data, num, train=True):
+    def __init__(self, data, num):
         super(COREL_5K, self).__init__()
         self.data = data
         self.num = num
         self.mean = [24.534070819674163, 25.25100188727893, 21.32722067148645]
-        self.train = train
     
     def __getitem__(self, index):
         data_path, label = self.data[index]
-        if not self.train:
-            if len(label) < 5:
-                label += [375]*(5-len(label))
+        label = np.array(label) - 1
         img = io.imread(data_path)
         if img.shape != (192, 128, 3):
             img = transform.resize(img, (192, 192))
@@ -96,13 +92,15 @@ class COREL_5K(Dataset):
         img[:, :, 1] = img[:, :, 1] - self.mean[1]
         img[:, :, 2] = img[:, :, 2] - self.mean[2]
         img = img.astype(np.float32)
-        return img, np.array(label).astype(np.int64) - 1
+        
+        label = np.sum(np.eye(374)[label], axis=0)
+        return img, label.astype(np.float32)
         
     def __len__(self):
         return self.num
 
 
-# In[5]:
+# In[4]:
 
 
 class BottleneckX(nn.Module):
@@ -219,35 +217,35 @@ class SEResNeXt(nn.Module):
         return x
 
 
-# In[6]:
+# In[5]:
 
 
-BATCH_SIZE = 32
+BATCH_SIZE = 16
 NUM_TRAIN = len(train_pairs)
-NUM_TEST = len(val_pairs)
+NUM_TEST = len(test_pairs)
 
 trainDataset = COREL_5K(train_pairs, NUM_TRAIN)
 train_loader = DataLoader(dataset=trainDataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, drop_last=True)
 
-valDataset = COREL_5K(val_pairs, NUM_TEST, train=False)
+valDataset = COREL_5K(val_pairs, NUM_TEST)
 val_loader = DataLoader(dataset=valDataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, drop_last=False)
 
-testDataset = COREL_5K(test_pairs, NUM_TEST, train=False)
+testDataset = COREL_5K(test_pairs, NUM_TEST)
 test_loader = DataLoader(dataset=testDataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, drop_last=False)
 
 
-# In[7]:
+# In[6]:
 
 
 LEARNING_RATE = 0.001
 
-model = SEResNeXt(BottleneckX, [3, 4, 6, 3], num_classes=375)
+model = SEResNeXt(BottleneckX, [3, 4, 6, 3], num_classes=374)
 model.cuda()
-critrien = nn.CrossEntropyLoss()
+critrien = nn.BCEWithLogitsLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 
-# In[8]:
+# In[9]:
 
 
 NUM_EPOCHS = 10
@@ -257,7 +255,7 @@ for epoch in range(NUM_EPOCHS):
     test_loss = 0
     train_acc = 0
     test_acc = 0
-    for i, (data, label) in tqdm(enumerate(train_loader), total=NUM_TRAIN//BATCH_SIZE, ncols=100, leave=False, unit='b'):
+    for i, (data, label) in tqdm(enumerate(train_loader), total=NUM_TRAIN // BATCH_SIZE, ncols=50, leave=False, unit='b'):
         data = Variable(data).cuda()
         label = Variable(label).cuda()
         optimizer.zero_grad()
@@ -265,21 +263,25 @@ for epoch in range(NUM_EPOCHS):
         loss = critrien(output, label)
         train_loss += loss.data[0]
         _, predict = torch.max(output, 1)
-        train_acc += (predict == label).sum().data[0]
+        label = label.cpu().data.numpy()
+        pred = predict.data
+        for i in range(len(pred)):
+            if pred[i] in list(np.where(label[i]==1)[0]):
+                train_acc += 1
         loss.backward()
         optimizer.step()
         
     for i, (data, label) in enumerate(val_loader):
         data = Variable(data).cuda()
         label = Variable(label).cuda()
-        label1 = label.data
         output = model(data)
-        loss = critrien(output, label[:, 0])
+        loss = critrien(output, label)
         test_loss += loss.data[0]
         _, predict = torch.max(output, 1)
+        label = label.cpu().data.numpy()
         pred = predict.data
         for i in range(len(pred)):
-            if pred[i] in list(label1[i]):
+            if pred[i] in list(np.where(label[i]==1)[0]):
                 test_acc += 1
     
     print('Epoch [%d/%d], Train Loss: %.4f, Train Acc: %.4f, Test Loss: %.4f, Test Acc: %.4f'
