@@ -251,14 +251,13 @@ for i in labels:
         a[i] = 1
 for i in a.keys():
     a[i] = 1/a[i]
-weights = list(a.values())
+weights = torch.FloatTensor(list(a.values()))
 
 
 # In[6]:
 
 
 LEARNING_RATE = 0.001
-
 model = SEResNeXt(BottleneckX, [3, 4, 6, 3], num_classes=374)
 model.cuda()
 critrien = nn.BCEWithLogitsLoss(weight=weights,size_average=False)
