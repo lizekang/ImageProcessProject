@@ -241,7 +241,7 @@ LEARNING_RATE = 0.001
 
 model = SEResNeXt(BottleneckX, [3, 4, 6, 3], num_classes=374)
 model.cuda()
-critrien = nn.BCEWithLogitsLoss()
+critrien = nn.BCEWithLogitsLoss(size_average=False)
 optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 
