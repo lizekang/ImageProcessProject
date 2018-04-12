@@ -172,6 +172,7 @@ class SEResNeXt(nn.Module):
         self.layer4 = self._make_layer(block, 1024, layers[3], stride=2)
         self.avgpool = nn.AvgPool2d((6, 4))
         self.fc = nn.Linear(1024 * block.expansion, num_classes)
+        self.dropout = nn.Dropout(0.5)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -212,6 +213,7 @@ class SEResNeXt(nn.Module):
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
+        x = self.dropout(x)
         x = self.fc(x)
 
         return x
@@ -220,18 +222,36 @@ class SEResNeXt(nn.Module):
 # In[5]:
 
 
-BATCH_SIZE = 16
+BATCH_SIZE = 64
 NUM_TRAIN = len(train_pairs)
 NUM_TEST = len(test_pairs)
 
 trainDataset = COREL_5K(train_pairs, NUM_TRAIN)
-train_loader = DataLoader(dataset=trainDataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, drop_last=True)
+train_loader = DataLoader(dataset=trainDataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=8, drop_last=True)
 
 valDataset = COREL_5K(val_pairs, NUM_TEST)
-val_loader = DataLoader(dataset=valDataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, drop_last=False)
+val_loader = DataLoader(dataset=valDataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=8, drop_last=False)
 
 testDataset = COREL_5K(test_pairs, NUM_TEST)
-test_loader = DataLoader(dataset=testDataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, drop_last=False)
+test_loader = DataLoader(dataset=testDataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=8, drop_last=False)
+
+
+# In[16]:
+
+
+a = {}
+labels = []
+[labels.extend(i[1]) for i in train_pairs]
+[labels.extend(i[1]) for i in test_pairs]
+[labels.extend(i[1]) for i in val_pairs]
+for i in labels:
+    if i in a.keys():
+        a[i] += 1
+    else:
+        a[i] = 1
+for i in a.keys():
+    a[i] = 1/a[i]
+weights = list(a.values())
 
 
 # In[6]:
@@ -240,15 +260,15 @@ test_loader = DataLoader(dataset=testDataset, batch_size=BATCH_SIZE, shuffle=Fal
 LEARNING_RATE = 0.001
 
 model = SEResNeXt(BottleneckX, [3, 4, 6, 3], num_classes=374)
-model.cuda()
-critrien = nn.BCEWithLogitsLoss(size_average=False)
+# model.cuda()
+critrien = nn.BCEWithLogitsLoss(weight=weights,size_average=False)
 optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 
 # In[9]:
 
 
-NUM_EPOCHS = 10
+NUM_EPOCHS = 100
 best_acc = 0
 for epoch in range(NUM_EPOCHS):
     train_loss = 0
