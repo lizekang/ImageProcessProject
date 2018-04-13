@@ -6,7 +6,7 @@
 
 import os
 import math
-import random 
+import random
 import numpy as np
 
 from skimage import io,transform
@@ -18,10 +18,15 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 from torch import autograd
 from torch.autograd import Variable
+from torchvision import transforms
 
 from tqdm import tqdm
 import warnings
 warnings.filterwarnings("ignore")
+
+from visdom import Visdom
+viz = Visdom()
+print("visdom: ",viz.check_connection())
 
 ROOT = "Datasets/corel_5k/images/"
 dirs = [ROOT+i+"/" for i in next(os.walk(ROOT))[1]]
@@ -73,35 +78,30 @@ for i in files:
 
 
 class COREL_5K(Dataset):
-    def __init__(self, data, num):
+    def __init__(self, data, num, trans=None):
         super(COREL_5K, self).__init__()
         self.data = data
         self.num = num
-        self.mean = [0.3853909028535724, 0.4004333749569167, 0.34717936323577203]
+        self.trans = trans
     
     def __getitem__(self, index):
         data_path, label = self.data[index]
         label = np.array(label) - 1
         img = io.imread(data_path)
-#        if img.shape != (192, 128, 3):
-#            img = transform.resize(img, (192, 192))
-#            img = transform.rotate(img, 90)
-#            img = transform.resize(img, (192, 128))
-        img = transform.resize(img, (192, 192))
-        img = np.array(img)
-        img[:, :, 0] = img[:, :, 0] - self.mean[0]
-        img[:, :, 1] = img[:, :, 1] - self.mean[1]
-        img[:, :, 2] = img[:, :, 2] - self.mean[2]
-        img = img.astype(np.float32)
-        
+        if self.trans:
+            img = self.trans(img)
         label = np.sum(np.eye(374)[label], axis=0)
         return img, label.astype(np.float32)
         
     def __len__(self):
         return self.num
+    
+    def _gen_noise_image(self, image, noise_rate):
+        noise_image = np.random.uniform(-0.001, 0.001,(image.shape)).astype('float32')
+        return noise_rate * noise_image + (1-noise_rate) * image
 
 
-# In[4]:
+# In[9]:
 
 
 class BottleneckX(nn.Module):
@@ -173,7 +173,6 @@ class SEResNeXt(nn.Module):
         self.layer4 = self._make_layer(block, 1024, layers[3], stride=2)
         self.avgpool = nn.AvgPool2d((6, 6))
         self.fc = nn.Linear(1024 * block.expansion, num_classes)
-        self.dropout = nn.Dropout(0.5)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -201,7 +200,6 @@ class SEResNeXt(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        x = x.permute(0, 3, 1, 2)
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -214,30 +212,45 @@ class SEResNeXt(nn.Module):
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
-        x = self.dropout(x)
         x = self.fc(x)
 
         return x
 
 
-# In[5]:
+# In[10]:
 
 
-BATCH_SIZE = 32
+BATCH_SIZE = 8
 NUM_TRAIN = len(train_pairs)
 NUM_TEST = len(test_pairs)
 
-trainDataset = COREL_5K(train_pairs, NUM_TRAIN)
-train_loader = DataLoader(dataset=trainDataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=8, drop_last=True)
+train_transform = transforms.Compose([
+    transforms.ToPILImage(),
+    transforms.Resize((192, 192)),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(degrees=90),
+    transforms.ToTensor(),
+    transforms.Normalize([0.3853909028535724, 0.4004333749569167, 0.34717936323577203], [1,1,1]),
+])
 
-valDataset = COREL_5K(val_pairs, NUM_TEST)
-val_loader = DataLoader(dataset=valDataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=8, drop_last=False)
+test_transform = transforms.Compose([
+    transforms.ToPILImage(),
+    transforms.Resize((192, 192)),
+    transforms.ToTensor(),
+    transforms.Normalize([0.3853909028535724, 0.4004333749569167, 0.34717936323577203], [1,1,1]),
+])
 
-testDataset = COREL_5K(test_pairs, NUM_TEST)
-test_loader = DataLoader(dataset=testDataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=8, drop_last=False)
+trainDataset = COREL_5K(train_pairs, NUM_TRAIN, train_transform)
+train_loader = DataLoader(dataset=trainDataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, drop_last=True)
+
+valDataset = COREL_5K(val_pairs, NUM_TEST, test_transform)
+val_loader = DataLoader(dataset=valDataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, drop_last=False)
+
+testDataset = COREL_5K(test_pairs, NUM_TEST, test_transform)
+test_loader = DataLoader(dataset=testDataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, drop_last=False)
 
 
-# In[16]:
+# In[7]:
 
 
 a = {}
@@ -252,10 +265,10 @@ for i in labels:
         a[i] = 1
 for i in a.keys():
     a[i] = 1/a[i]
-weights = torch.FloatTensor(list(a.values())).cuda()
+# weights = torch.FloatTensor(list(a.values())).cuda()
 
 
-# In[6]:
+# In[11]:
 
 
 LEARNING_RATE = 0.001
@@ -265,10 +278,11 @@ critrien = nn.BCEWithLogitsLoss(size_average=False)
 optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 
-# In[9]:
+# In[12]:
 
 
-NUM_EPOCHS = 20
+# train
+NUM_EPOCHS = 10
 best_acc = 0
 for epoch in range(NUM_EPOCHS):
     train_loss = 0
@@ -291,8 +305,8 @@ for epoch in range(NUM_EPOCHS):
                 train_acc += 1
         loss.backward()
         optimizer.step()
-    model.eval() 
-    for i, (data, label) in enumerate(test_loader):
+    model.eval()
+    for i, (data, label) in enumerate(val_loader):
         data = Variable(data).cuda()
         label = Variable(label).cuda()
         output = model(data)
@@ -311,5 +325,51 @@ for epoch in range(NUM_EPOCHS):
               test_loss / NUM_TEST, test_acc / NUM_TEST))
     if test_acc > best_acc:
         best_acc = test_acc
-        torch.save(model.state_dict(), "models/SEResNext.pkl")
+        torch.save(model.state_dict(), "models/SEResNext2.pkl")
+
+
+# In[6]:
+
+
+# predict
+def predict():
+    with open("Datasets/corel_5k/labels/words") as f:
+        words = [i[:-1] for i in f.readlines()]
+
+    def img_back(img):
+        mean = [0.3853909028535724, 0.4004333749569167, 0.34717936323577203]
+        img[:, :, 0] = img[:, :, 0] + mean[0]
+        img[:, :, 1] = img[:, :, 1] + mean[1]
+        img[:, :, 2] = img[:, :, 2] + mean[2]
+        return img
+
+    BATCH_SIZE = 8
+    NUM_TEST = len(test_pairs)
+
+    testDataset = COREL_5K(test_pairs, NUM_TEST)
+    test_loader = DataLoader(dataset=testDataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, drop_last=False)
+    model = SEResNeXt(BottleneckX, [3, 4, 6, 3], num_classes=374)
+    model.load_state_dict(torch.load("models/SEResNext1.pkl"))
+    model.cuda()
+
+    test_acc = 0
+    model.eval()
+    for i, (data, label) in enumerate(test_loader):
+        data = Variable(data).cuda()
+        label = Variable(label).cuda()
+        output = model(data)
+    #     _, predict = torch.max(output, 1)
+        _, predict = torch.sort(output)
+        label = label.cpu().data.numpy()
+        pred = (predict.data)[:, -4:]
+        for i in range(len(pred)):
+            if len(set(pred[i]) & set(list(np.where(label[i]==1)[0]))):
+                test_acc += 1
+            else:
+                img = data.cpu().data.numpy()[i]
+                gt = [words[i] for i in list(np.where(label[i]==1)[0])]
+                predic = [words[i] for i in list(pred[i].cpu().numpy())]
+                viz.image(np.transpose(img_back(img), (2, 0, 1)),
+                         opts=dict(title=" ".join(gt), caption=" ".join(predic)))
+    print(test_acc / NUM_TEST)
 
