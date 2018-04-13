@@ -6,7 +6,7 @@ Datasets/
 models/
 # C extensions
 *.so
-
+*.out
 # Distribution / packaging
 .Python
 env/

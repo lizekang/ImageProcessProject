@@ -6,7 +6,7 @@
 
 import os
 import math
-import random
+import random 
 import numpy as np
 
 from skimage import io,transform
@@ -77,16 +77,17 @@ class COREL_5K(Dataset):
         super(COREL_5K, self).__init__()
         self.data = data
         self.num = num
-        self.mean = [24.534070819674163, 25.25100188727893, 21.32722067148645]
+        self.mean = [0.3853909028535724, 0.4004333749569167, 0.34717936323577203]
     
     def __getitem__(self, index):
         data_path, label = self.data[index]
         label = np.array(label) - 1
         img = io.imread(data_path)
-        if img.shape != (192, 128, 3):
-            img = transform.resize(img, (192, 192))
-            img = transform.rotate(img, 90)
-            img = transform.resize(img, (192, 128))
+#        if img.shape != (192, 128, 3):
+#            img = transform.resize(img, (192, 192))
+#            img = transform.rotate(img, 90)
+#            img = transform.resize(img, (192, 128))
+        img = transform.resize(img, (192, 192))
         img = np.array(img)
         img[:, :, 0] = img[:, :, 0] - self.mean[0]
         img[:, :, 1] = img[:, :, 1] - self.mean[1]
@@ -170,7 +171,7 @@ class SEResNeXt(nn.Module):
         self.layer2 = self._make_layer(block, 256, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 512, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 1024, layers[3], stride=2)
-        self.avgpool = nn.AvgPool2d((6, 4))
+        self.avgpool = nn.AvgPool2d((6, 6))
         self.fc = nn.Linear(1024 * block.expansion, num_classes)
         self.dropout = nn.Dropout(0.5)
 
@@ -222,7 +223,7 @@ class SEResNeXt(nn.Module):
 # In[5]:
 
 
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 NUM_TRAIN = len(train_pairs)
 NUM_TEST = len(test_pairs)
 
@@ -260,14 +261,14 @@ weights = torch.FloatTensor(list(a.values())).cuda()
 LEARNING_RATE = 0.001
 model = SEResNeXt(BottleneckX, [3, 4, 6, 3], num_classes=374)
 model.cuda()
-critrien = nn.BCEWithLogitsLoss(weight=weights,size_average=False)
+critrien = nn.BCEWithLogitsLoss(size_average=False)
 optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 
 # In[9]:
 
 
-NUM_EPOCHS = 100
+NUM_EPOCHS = 20
 best_acc = 0
 for epoch in range(NUM_EPOCHS):
     train_loss = 0
@@ -291,7 +292,7 @@ for epoch in range(NUM_EPOCHS):
         loss.backward()
         optimizer.step()
     model.eval() 
-    for i, (data, label) in enumerate(val_loader):
+    for i, (data, label) in enumerate(test_loader):
         data = Variable(data).cuda()
         label = Variable(label).cuda()
         output = model(data)
